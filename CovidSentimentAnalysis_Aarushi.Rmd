@@ -1,0 +1,838 @@
+---
+title: "Covid -19 Tweets Sentiment Analysis"
+author: "Aarushi Agarwal"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Executive Summary
+Covid-19 has created a new normal to our way of life. As the businesses are opening, a lot of analysis is going on over some big questions – "Are people ready to move out of their houses?", "Is work from home the way it is going to be from now on?" , "What are their emotions about the change?" ,"About covid-19?" In this project, we built a model based on Naive Bayes algorithm, to analyze the sentiments of people via tweets from March till June 2020 and classified them as positive or negative. Our analysis shows us that the number of positive tweets has been consistently higher throughout the duration. Opposite to what some of the media houses are telling us, there is a lot positivity around, in terms of fighting this pandemic,being supportive towards policies and helping each other tackling one of the biggest pandemics which has forced us into our homes.   
+
+\newpage
+
+# A. Introduction
+Sentiment analysis is the gathering of people’s views regarding any event happening in real life. The objective of this project is to classify tweets related to coronavirus as positive and negative and analyze the variation in sentiments of people with time. The tweets range from March to June 2020. The tweets are focused around the keywords #Coronavirus, #Coronaoutbreak, #COVID19. 
+Based on the current situation, it is our assumption that the tweets will be generally negative. 
+
+This analysis can help us to come up with an agenda for the new normal. It can help businesses in making some important decisions. The use cases are infinite, ranging from inventory management which has turned out to be of particular importance and challenging during these unprecendted times, to understanding the emotions of people circling government policies during this catastrophic event.
+
+This list could go on and on, but something common between all of these, is the fact that we are trying to see how people react in certain situations and chain of events. Something that is really important to understand now, but can be used in aspects, even when Covid-19 fades away.
+
+
+
+```{r setup, include=FALSE}
+#Loading the Packages
+pacman::p_load(tidyverse, tidytext, lubridate, stringr,readr,plyr,caret,
+               gutenbergr, reshape2, wordcloud, textdata,ggplot2,e1071,tm,syuzhet,scales,
+               dplyr,sentimentr,rtweet,qdapRegex,twitteR,SnowballC,RColorBrewer,tidyr)
+
+```
+
+
+# B. Data Description
+Two datasets have been used in this project: 
+
+1. Dataset for training the machine learning model.
+    
+A pre-classified dataset has been used from Kaggle to train the model. It has 96448 tweets, with each tweet classified as either positive or negative. 
+    
+2. Tweets from March 3, 2020 and June 9, 2020. 
+   
+This dataset is provided by Harvard Dataverse. It comprises of 24 csv’s with coronavirus tweet ids from March 3, 2020 to June 9, 2020. The hashtags used for tweets extraction are #Coronavirus, #Coronaoutbreak and #COVID19.The tweets are from all over the world.
+
+
+
+```{r eval=FALSE, include=FALSE}
+#Creating a sample of 100,000 tweets from 24 files containing 240 million tweets
+```{undefined echo=FALSE}
+filelist = list.files(path=myTxtDir,pattern = "*.txt")
+
+datalist = lapply(filelist, function(x)read.table(x, header=F)) 
+
+datafr = do.call("rbind", datalist) 
+set.seed(123)
+options(scipen = 999) 
+trainindex <- createDataPartition(datafr$V1, p=0.001, list= FALSE)
+main_df <- datafr[trainindex, ]
+write.table(main_df, "A:/tweetIds.txt")
+
+```
+
+
+
+```{r warning=FALSE, include=FALSE}
+#Loading the parsed dataset
+set.seed(123)
+dat_csv<-read.csv("tweetIdsCSV.csv", stringsAsFactors = FALSE)
+
+```
+
+# C.Preprocessing Data
+
+After random sampling tweets from the dataset, I boiled it down to 103,154 tweets.
+A tweet Hydrator application was used to get actual Twitter data(text of the tweet,created_date, names of the person, location, likes, retweet count, user popularity parameters etc. ) corresponding to the random sampled tweets. This data was in json format. An online parser was used to convert the json file to a csv. 
+
+My analysis started with the parsed csv file. Starting with preprocessing the data. Initially, I selected all the tweets belonging to the English language and discarded the rest – boiling my data set to 52976 records. Further, I have removed the records where hashtags column was empty, which gave me a final dataset with 30923 records. For further analysis, I also did date formatting and tweets text formatting. Additionally, I have dropped some columns  with had very few values. 
+
+The tweets text formatting was done for both the datasets. The tweets text was first cleared from punctuation, url, special characters, upper case, digits and extra spacings. Then, I converted it into a Corpus. After converting it to a corpus, I removed english language stopwords and converted the Corpus to a Term Document Matrix. A Term Document Matrix is a mathematical matrix that describes the frequency of terms that occur in a collection of documents. Now, I have rectangular structured Dataset for further analysis.
+
+
+```{r warning=FALSE, include=FALSE}
+#A part of code has been commented to save time and for a clear output interpretation
+#dim(dat_csv)
+#str(dat_csv)
+#summary(dat_csv)
+#dat_csv[!is.na( dat_csv$YEAR.BUILT),]
+
+#count(dat_csv$lang=="en")
+# Keeping only english language records
+dat_csv<-dat_csv[dat_csv$lang=="en",]
+#dim(dat_csv)
+lapply(dat_csv,function(x) { length(which((x!="")))})
+#dROPPING COORDINATES COLUMN AS IT HAS ONLY 30 ENTRIES
+#count(!is.na(dat_csv$nhbvvvxz))
+dat_csv<-dat_csv[,-1]
+
+#removing media column as it has just urls for different media
+dat_csv<-dat_csv[,-3]
+
+#removing tweet_url column
+dat_csv<-dat_csv[,-17]
+
+#removing url column
+dat_csv<-dat_csv[,-3]
+
+
+dat_csv<-dat_csv[!dat_csv$hashtags=="",]
+
+sum_stat <- do.call(data.frame, 
+           list(mean = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, mean),
+                sd = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, sd),
+                median = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, median),
+                min = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, min),
+                max = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, max),
+                n = apply(dat_csv[,(c(3,11,21,20,22,23))], 2, length)))
+sum_stat
+
+dat_csv$created_at <- strptime(dat_csv$created_at, "%a %b %d %H:%M:%S %z %Y", tz = "GMT") 
+
+dat_csv$created_at <- as.POSIXct(dat_csv$created_at, tz = "GMT") 
+
+
+dat_csv$created_date <- date(dat_csv$created_at)
+dat_csv$created_time <- hour(dat_csv$created_at)
+
+
+```
+
+```{r include=FALSE}
+#Cleaning Tweet Text
+dat_csv$text = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", "", dat_csv$text)
+dat_csv$text <-gsub('@\\w+', '', dat_csv$text)
+dat_csv$text <-gsub('[[:punct:]]', '', dat_csv$text)
+dat_csv$text <-gsub('[[:digit:]]', '', dat_csv$text)
+dat_csv$text <-gsub('http\\w+', '', dat_csv$text)
+dat_csv$text <-gsub('[ \t]{2,}', '', dat_csv$text)
+dat_csv$text <-gsub('^\\s+$', '', dat_csv$text)
+dat_csv$text <-gsub('[ \n]{2,}', '', dat_csv$text)
+dat_csv$text <-gsub('[ \n]{2,}', '', dat_csv$text)
+dat_csv$text <-gsub('\u008f', '', dat_csv$text)
+dat_csv$text <-gsub('\u0090', '', dat_csv$text)
+
+
+
+dat_csv$text <- str_replace_all(string = dat_csv$text, pattern = "[;#â®Ÿ€™Âðš]", replacement = "")
+
+dat_csv$text <- str_squish(dat_csv$text)
+dat_csv$text = tolower(dat_csv$text)
+dat_csv$text = gsub('<.*>', '', enc2native(dat_csv$text))
+
+
+# removing duplicates due to retweets
+dat_csv <- dat_csv[!duplicated(dat_csv$text),]
+
+tweets_March<-dat_csv[month(dat_csv$created_date)==3,]
+tweets_April<-dat_csv[month(dat_csv$created_date)==4,]
+tweets_May<-dat_csv[month(dat_csv$created_date)==5,]
+tweets_June<-dat_csv[month(dat_csv$created_date)==6,]
+```
+
+```{r include=FALSE}
+#DataSet Preprocessing for Training the Model
+samplecsv<-read.csv("KaggleTweets.csv")
+#tail(samplecsv, n=20)
+summary(samplecsv)
+
+
+samplecsv$SentimentText = gsub("(RT|via)((?:\\b\\W*@\\w+)+)", " ", samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('@\\w+', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('[[:punct:]]', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('[[:digit:]]', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('http\\w+', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('[ \t]{2,}', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('[ \n]{2,}', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('[ \n]{2,}', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText<-gsub('\u008f', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <-gsub('\u0090', ' ', samplecsv$SentimentText)
+samplecsv$SentimentText <- str_replace_all(string = samplecsv$SentimentText, pattern = "[;#â®Ÿ€™Âðš]", replacement = "")
+
+samplecsv$SentimentText <- str_squish(samplecsv$SentimentText)
+samplecsv$SentimentText = tolower(samplecsv$SentimentText)
+samplecsv$SentimentText = gsub('<.*>', ' ', enc2native(samplecsv$SentimentText))
+
+
+# removing duplicates due to retweets
+samplecsv <- samplecsv[!duplicated(samplecsv$SentimentText),]
+
+
+
+sampleCorpus<-iconv(samplecsv$SentimentText,to="UTF-8")
+sampleCorpus<-Corpus(VectorSource(sampleCorpus))
+sampleCorpus<-tm_map(sampleCorpus,removeWords,stopwords('english'))
+sampleCorpus<-tm_map(sampleCorpus,removeWords,c( "amp"))
+sampleCorpus<-tm_map(sampleCorpus,stripWhitespace)
+
+
+tdm<-TermDocumentMatrix(sampleCorpus)
+
+set.seed(123)
+
+
+convert_count <- function(x) {
+    y <- ifelse(x > 0, 1,0)
+    y <- factor(y, levels=c(0,1), labels=c("No", "Yes"))
+    y
+}
+
+dtm = removeSparseTerms(tdm, 0.999)
+dim(dtm)
+dataset <- apply(dtm, 2, convert_count)
+
+dataset<- as.data.frame(t(as.matrix(dataset)))
+
+
+dataset$Sentiment<-samplecsv$Sentiment
+
+split = sample(2,nrow(dataset),prob = c(0.8,0.2),replace = TRUE)
+train_set = dataset[split == 1,]
+test_set = dataset[split == 2,] 
+
+prop.table(table(train_set$Sentiment))
+prop.table(table(test_set$Sentiment))
+train_set$Sentiment<-ifelse(train_set$Sentiment==0,"Negative", "Positive")
+test_set$Sentiment<-ifelse(test_set$Sentiment==0,"Negative", "Positive")
+test_set$Sentiment <- as.factor(test_set$Sentiment)
+
+```
+
+
+
+# D. Exploratory Data Analysis
+
+The below Histogram shows the distrubution of tweets over the time period (March-June).  
+
+```{r echo=FALSE, warning=FALSE}
+#Created_DAte formatting
+
+
+ggplot(dat_csv) +
+ aes(x = created_date) +
+ geom_histogram(bins = 30L, color="black", fill = "pink") +
+  labs(title="Dates Histogram")+
+ theme_minimal()
+
+```
+
+```{r eval=FALSE, include=FALSE}
+# Distribution of User Friends Count
+ggplot(dat_csv) +
+ aes(x = user_friends_count) +
+ geom_histogram(bins = 50, color="black", fill = "pink") +
+  labs(title="User Friends Histogram")+
+ theme_minimal()
+
+# Distribution of Retweets
+ggplot(dat_csv) +
+ aes(x = retweet_count) +
+ geom_histogram(bins = 100, color="black", fill = "pink") +
+  labs(title="Retweet Histogram")+
+ theme_minimal()
+
+# dat_csv %>%
+#   count(user_location, sort = TRUE) %>%
+#   mutate(location = reorder(user_location, n)) %>%
+#   top_n(20) %>%
+#   ggplot(aes(x = location, y = n)) +
+#   geom_col() +
+#   coord_flip() +
+#       labs(x = "Count",
+#       y = "Location",
+#       title = "Where Twitter users are from - unique locations ")
+```
+
+\newpage
+
+Below is the Word Cloud created for the tweets text. We can see some frequent words in tweets like: Covid, Coronavirus, people, cases, will, lockdown, pandemic, etc. 
+
+
+
+```{r echo=FALSE, warning=FALSE}
+#Tweet Text Word Cloud
+
+    # Removing URLs 
+
+text <- str_c(dat_csv$text, collapse = "")
+
+# continue cleaning the text
+text <- 
+  text %>%
+  str_remove("\\n") %>%                   # remove linebreaks
+  rm_url() %>%
+  str_remove_all("#\\S+") %>%             # Remove any hashtags
+  str_remove_all("@\\S+") %>%             # Remove any @ mentions
+  removeWords(stopwords("english")) %>%   # Remove common words (a, the, it etc.)
+  removeNumbers() %>%
+  stripWhitespace() %>%
+  removeWords(c("amp"))     
+
+
+# Convert the data into a summary table
+textCorpus <- 
+  Corpus(VectorSource(text)) %>%
+  TermDocumentMatrix() %>%
+  as.matrix()
+
+textCorpus <- sort(rowSums(textCorpus), decreasing=TRUE)
+textCorpus <- data.frame(word = names(textCorpus), freq=textCorpus, row.names = NULL)
+
+
+
+wordcloud(words = textCorpus$word, freq = textCorpus$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+
+
+```
+
+
+\newpage
+
+Below is the Word Cloud created for the hashtags used in the tweets. Most frequent hashtags are covid and coronavirus.
+
+
+
+```{R echo=FALSE, warning=FALSE}
+# Hashtags Word CLoud
+
+
+textH <- str_c(dat_csv$hashtags, collapse = "")
+
+# continue cleaning the text
+textH <- 
+  textH %>%
+  str_remove("\\n") %>%                   # remove linebreaks
+  rm_twitter_url() %>%                    # Remove URLS
+  rm_url() %>%
+  str_remove_all("#\\S+") %>%             # Remove any hashtags
+  str_remove_all("@\\S+") %>%             # Remove any @ mentions
+  removeWords(stopwords("english")) %>%   # Remove common words (a, the, it etc.)
+  removeNumbers() %>%
+  stripWhitespace() %>%
+  removeWords(c("amp"))     
+
+
+# Convert the data into a summary table
+textCorpus2 <- 
+  Corpus(VectorSource(textH)) %>%
+  TermDocumentMatrix() %>%
+  as.matrix()
+
+textCorpus2 <- sort(rowSums(textCorpus2), decreasing=TRUE)
+textCorpus2 <- data.frame(word = names(textCorpus2), freq=textCorpus2, row.names = NULL)
+
+
+wordcloud(words = textCorpus2$word, freq = textCorpus2$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+```
+
+
+
+# E. Empirical analysis
+
+Naive Bayes Algorithm has been used for tweets classification. It is based on Naive Bayes Rule and assumes the independence of predictor variables within each class. It handles categorical data pretty well and is computaionally efficient.     
+
+Another algorithm I considered for classification is Support Vector Machines. However, it was not a computationally efficient algorithm. It took 1.39 hours to run it once. I could not the run the tune function so i manually tried a few values for hyperparameter Cost. I got the best algorithm for cost of 2 and linear kernel. 
+
+However, I got the best accuracy for Naive Bayes Model which is 72.54%. Please see below the confusion matrix for the model. 
+
+```{r eval=FALSE, include=FALSE}
+#SVM 
+#svm_classifier <- svm(Sentiment~., data=train_set, type="C")#accuracy=65.58
+#svm_classifier 
+
+#svm_classifier_linear <- svm(Sentiment~., data=train_set, type="C", kernel="linear")#accuracy 72.39
+#summary(svm_classifier_linear)
+
+#svm_classifier_linear_cost3<- svm(Sentiment~., data=train_set, type="C", kernel="linear",cost=3) 
+#svm_classifier_linear_cost
+startTime<-Sys.time()
+svm_classifier_linear_cost2<- svm(Sentiment~., data=train_set, type="C", kernel="linear",cost=2) 
+endTime<-Sys.time()
+svmtime<-endTime-startTime
+#Time difference of 1.391738 hours
+summary(svm_classifier_linear_cost2)
+#svm_classifier_linear_cost3
+#accuracy= 70.75 for cost 0.01
+
+#svmSample <- svm(tdmTrain,data=tdmTrain)
+#svm_pred<- predict(svm_classifier,test_set[,-918])
+#confusionMatrix(svm_pred,test_set$Sentiment)
+
+#svm_pred_linear<- predict(svm_classifier_linear,test_set[,-918]) #accuracy 72.39 cost =1
+#confusionMatrix(svm_pred_linear,test_set$Sentiment)
+
+set.seed(123)
+#svm_pred_linear_cost<- predict(svm_classifier_linear_cost,test_set[,-918]) #accuracy= 70.75 cost =0.01
+#confusionMatrix(svm_pred_linear_cost,test_set$Sentiment) 
+
+
+svm_pred_linear_cost2<-predict(svm_classifier_linear_cost2,test_set[,-918]) #accuracy  72.41
+summary(svm_classifier_linear_cost2)
+confusionMatrix(svm_pred_linear_cost2,test_set$Sentiment)
+
+#svm_pred_linear_cost3<-predict(svm_classifier_linear_cost3,test_set[,-918]) #accuracy 72.36
+#confusionMatrix(svm_pred_linear_cost3,test_set$Sentiment)
+
+
+
+
+
+```
+
+
+
+```{r echo=FALSE, warning=FALSE}
+#Naive Bayes
+train_set$Sentiment<- as.factor(train_set$Sentiment)
+naive_bayes<- naiveBayes(train_set, train_set$Sentiment)
+
+naive_bayes_pred<-predict(naive_bayes,type = 'raw',newdata=test_set[,-918])
+
+
+naive_bayes_pred<-as.data.frame(naive_bayes_pred)
+
+if(naive_bayes_pred$Negative>naive_bayes_pred$Positive){
+  pred.class<-"Negative"
+}else{
+  pred.class<-"Positive"
+}
+
+pred.class<-ifelse(naive_bayes_pred$Negative>naive_bayes_pred$Positive,"Negative", "Positive")
+pred.class<-as.factor(pred.class)
+
+nb.df <- data.frame(actual =test_set$Sentiment, predicted = pred.class, naive_bayes_pred )
+#head(nb.df,n=10)
+confusionMatrix(pred.class,test_set$Sentiment)# 72.54
+
+```
+
+
+
+
+
+```{r warning=FALSE, include=FALSE}
+#Due to memory contraints the analysis has been done on monthly data and later combined
+#March
+corpusMarch<-iconv(tweets_March$text,to="UTF-8")
+corpusMarch<-Corpus(VectorSource(corpusMarch))
+inspect(corpusMarch[1:10])
+
+corpusMarch<-tm_map(corpusMarch,removeWords,stopwords('english'))
+corpusMarch<-tm_map(corpusMarch,removeWords,c("asked", "amp","can","will"))
+corpusMarch<-tm_map(corpusMarch,stripWhitespace)
+
+#Term Document Matrix
+tdmMarch<-TermDocumentMatrix(corpusMarch)
+
+tdmMarch<-removeSparseTerms(tdmMarch, 0.999)
+dim(tdmMarch)
+tdmMarch <- apply(tdmMarch, 2, convert_count)
+
+tdmMarch<- as.data.frame(t(as.matrix(tdmMarch)))
+
+tdmMarch[1:10,1:20]
+naive_March<-predict(naive_bayes,type = 'raw',newdata=tdmMarch)
+naive_March<-as.data.frame(naive_March)
+
+
+march.pred.class<-ifelse(naive_March$Negative>naive_March$Positive,"Negative", "Positive")
+march.pred.class<-as.factor(march.pred.class)
+
+march.nb.df <- data.frame(Naive_Pred = march.pred.class , naive_March, date=tweets_March$created_date, text=tweets_March$text)
+dim(march.nb.df)
+head(march.nb.df,n=10)
+
+
+
+corpusMarch<-iconv(tweets_March$text,to="UTF-8")
+sentimentMarch<-get_nrc_sentiment(corpusMarch)
+sentimentMarch$Date<-tweets_March$created_date
+
+
+syuzhetMarch<-get_sentiment(corpusMarch, method="syuzhet",language="english")
+march.nb.df$Syuzhet<-ifelse(syuzhetMarch<0,"Negative", "Positive")
+
+march.nb.df$SentimentR<-sentiment(get_sentences(tweets_March$text))
+march.nb.df$SentimentR<-ifelse(march.nb.df$SentimentR$sentiment<0,"Negative", "Positive")
+
+plot(sentimentMarch)
+prop.table(table(march.nb.df$SentimentR))
+
+#get_sentiment_dictionary(dictionary = "syuzhet", language = "english")
+```
+
+
+```{r warning=FALSE, include=FALSE}
+#April
+corpusApril<-iconv(tweets_April$text,to="UTF-8")
+corpusApril<-Corpus(VectorSource(corpusApril))
+inspect(corpusApril[1:10])
+
+corpusApril<-tm_map(corpusApril,removeWords,stopwords('english'))
+corpusApril<-tm_map(corpusApril,removeWords,c("asked", "amp","can","will"))
+corpusApril<-tm_map(corpusApril,stripWhitespace)
+
+#Term Document Matrix
+tdmApril<-TermDocumentMatrix(corpusApril)
+tdmApril<-removeSparseTerms(tdmApril, 0.999)
+dim(tdmApril)
+tdmApril <- apply(tdmApril, 2, convert_count)
+
+tdmApril<- as.data.frame(t(as.matrix(tdmApril)))
+
+tdmApril[1:10,1:20]
+naive_April<-predict(naive_bayes,type = 'raw',newdata=tdmApril)
+naive_April<-as.data.frame(naive_April)
+
+
+april.pred.class<-ifelse(naive_April$Negative>naive_April$Positive,"Negative", "Positive")
+april.pred.class<-as.factor(april.pred.class)
+
+april.nb.df <- data.frame(Naive_Pred = april.pred.class , naive_April, date=tweets_April$created_date)
+april.nb.df$text<-tweets_April$text
+dim(april.nb.df)
+
+
+
+corpusApril<-iconv(tweets_April$text,to="UTF-8")
+sentimentApril<-get_nrc_sentiment(corpusApril)
+
+
+sentimentApril$Date<-tweets_April$created_date
+
+
+syuzhetApril<-get_sentiment(corpusApril, method="syuzhet",language="english")
+april.nb.df$Syuzhet<-ifelse(syuzhetApril<0,"Negative", "Positive")
+
+april.nb.df$SentimentR<-sentiment(get_sentences(tweets_April$text))
+april.nb.df$SentimentR<-ifelse(april.nb.df$SentimentR$sentiment<0,"Negative", "Positive")
+
+
+```
+
+
+
+```{r warning=FALSE, include=FALSE}
+#May
+corpusMay<-iconv(tweets_May$text,to="UTF-8")
+corpusMay<-Corpus(VectorSource(corpusMay))
+inspect(corpusMay[1:10])
+
+corpusMay<-tm_map(corpusMay,removeWords,stopwords('english'))
+corpusMay<-tm_map(corpusMay,removeWords,c("asked", "amp","can","will"))
+corpusMay<-tm_map(corpusMay,stripWhitespace)
+
+#Term Document Matrix
+tdmMay<-TermDocumentMatrix(corpusMay)
+
+tdmMay<-removeSparseTerms(tdmMay, 0.999)
+dim(tdmMay)
+tdmMay <- apply(tdmMay, 2, convert_count)
+
+tdmMay<- as.data.frame(t(as.matrix(tdmMay)))
+
+tdmMay[1:10,1:20]
+naive_May<-predict(naive_bayes,type = 'raw',newdata=tdmMay)
+naive_May<-as.data.frame(naive_May)
+
+
+may.pred.class<-ifelse(naive_May$Negative>naive_May$Positive,"Negative", "Positive")
+may.pred.class<-as.factor(may.pred.class)
+
+may.nb.df <- data.frame( Naive_Pred = may.pred.class , naive_May, date=tweets_May$created_date)
+may.nb.df$text<-tweets_May$text
+dim(may.nb.df)
+head(may.nb.df,n=10)
+
+
+
+corpusMay<-iconv(tweets_May$text,to="UTF-8")
+sentimentMay<-get_nrc_sentiment(corpusMay)
+
+sentimentMay$Date<-tweets_May$created_date
+
+
+syuzhetMay<-get_sentiment(corpusMay, method="syuzhet",language="english")
+may.nb.df$Syuzhet<-ifelse(syuzhetMay<0,"Negative", "Positive")
+
+may.nb.df$SentimentR<-sentiment(get_sentences(tweets_May$text))
+may.nb.df$SentimentR<-ifelse(may.nb.df$SentimentR$sentiment<0,"Negative", "Positive")
+
+
+
+```
+
+
+```{r warning=FALSE, include=FALSE}
+#June
+corpusJune<-iconv(tweets_June$text,to="UTF-8")
+corpusJune<-Corpus(VectorSource(corpusJune))
+inspect(corpusJune[1:10])
+
+corpusJune<-tm_map(corpusJune,removeWords,stopwords('english'))
+corpusJune<-tm_map(corpusJune,removeWords,c("asked", "amp","can","will"))
+corpusJune<-tm_map(corpusJune,stripWhitespace)
+
+#Term Document Matrix
+tdmJune<-TermDocumentMatrix(corpusJune)
+
+tdmJune = removeSparseTerms(tdmJune, 0.999)
+dim(tdmJune)
+tdmJune <- apply(tdmJune, 2, convert_count)
+
+tdmJune<- as.data.frame(t(as.matrix(tdmJune)))
+
+#tdmJune[1:10,1:20]
+
+
+corpusJune<-iconv(tweets_June$text,to="UTF-8")
+sentimentJune<-get_nrc_sentiment(corpusJune)
+corpusJune[1]
+
+sentimentJune$Date<- tweets_June$created_date
+
+
+naive_june<-predict(naive_bayes,type = 'raw',newdata=tdmJune)
+
+naive_june<-as.data.frame(naive_june)
+
+if(naive_june$Negative>naive_june$Positive){
+  june.pred.class<-"Negative"
+}else{
+  june.pred.class<-"Positive"
+}
+
+
+june.pred.class<-ifelse(naive_june$Negative>naive_june$Positive,"Negative", "Positive")
+june.pred.class<-as.factor(june.pred.class)
+
+june.nb.df <- data.frame( Naive_Pred = june.pred.class ,naive_june, date =tweets_June$created_date)
+june.nb.df$text<-tweets_June$text
+
+#dim(june.nb.df)
+#head(june.nb.df,n=10)
+
+
+syuzhetJune<-get_sentiment(corpusJune, method="syuzhet",language="english")
+june.nb.df$Syuzhet<-ifelse(syuzhetJune<0,"Negative", "Positive")
+
+
+summary(syuzhetJune)
+syuzhetJune<-ifelse(syuzhetJune<0,"Negative", "Positive")
+
+
+june.nb.df$SentimentR<-sentiment(get_sentences(tweets_June$text))
+june.nb.df$SentimentR<-ifelse(june.nb.df$SentimentR$sentiment<0,"Negative", "Positive")
+
+prop.table(table(syuzhetJune))
+prop.table(table(june.pred.class))
+
+```
+
+
+The Below charts show the Distribution of probabilities, predicted by Naive Bayes Model, with Dates. There is an increase in positive probabilities from March till May and it goes down a little in JUne. WE can observe the vice versa in negative probabilities. These charts show us the people have been most negative in March as after that the negativity among people for coronavirus has decreased. 
+```{r echo=FALSE, warning=FALSE}
+#Combining the results of different months into a single dataframe
+
+df<-rbind(march.nb.df,april.nb.df,may.nb.df,june.nb.df )
+
+par(mfrow=c(1,2))
+ggplot(df, aes(x = date, y = Positive)) + 
+  geom_smooth(method = "auto")
+ggplot(df, aes(x = date, y = Negative)) + 
+  geom_smooth(method = "auto")
+
+
+#prop.table(table(df$Syuzhet))
+#prop.table(table(df$Naive_Pred))
+#prop.table(table(df$SentimentR))
+
+
+```
+
+\newpage
+
+Below chart shows the number of classified tweets as Positive and Negative. There is a consistent overall trend in the number of positive tweets and negative tweets throughout the duration. 
+
+
+```{r echo=FALSE}
+
+#ggplot(df,aes(month(date), fill=Naive_Pred))+geom_bar(position="dodge")
+ggplot(df,aes(date, fill=Naive_Pred))+geom_bar(position="dodge")+labs(x="Dates",y="Number of Tweets",title = "Covid Sentiment Analysis Using Naive Bayes Model")+ theme_classic()+theme(legend.position ="top" ,plot.title = element_text(size = 16, face = "bold"),legend.title = element_blank()) 
+
+
+```
+
+
+\newpage
+
+The below chart has been created using the Syuzhet Library. The Lexicon used is NRC. It gives emotions of the text passed through it. The below chart shows the overall emotions for the entire duration (March-June). The most powerful emotions come out to be of Trust, Fear and Anticipation.  
+```{r echo=FALSE}
+#NRC Sentiemnt Analysis
+
+nrc.df<-rbind(sentimentMarch,sentimentApril,sentimentMay,sentimentJune)
+
+barplot(colSums(nrc.df[,c(1,2,3,4,5,6,7,8)],month(nrc.df$Date)),las=2,col=rainbow(10), beside=T)
+
+```
+
+
+\newpage
+
+The below charts show the Emotions Separately for each month. This also shows that Trust, Fear and Anticipation are the most dominant emotions in each month. 
+
+```{r echo=FALSE, warning=FALSE}
+par(mfrow=c(2,2))
+barplot(colSums(sentimentMarch[,c(1,2,3,4,5,6,7,8)]),las=2,col=rainbow(10),main = "Emotions Chart for March")
+barplot(colSums(sentimentApril[,c(1,2,3,4,5,6,7,8)]),las=2,col=rainbow(10),main = "Emotions Chart for April")
+barplot(colSums(sentimentMay[,c(1,2,3,4,5,6,7,8)]),las=2,col=rainbow(10),main = "Emotions Chart for May")
+barplot(colSums(sentimentJune[,c(1,2,3,4,5,6,7,8)]),las=2,col=rainbow(10),main = "Emotions Chart for June")
+
+
+```
+
+\newpage
+
+The Word Cloud created for Tweets classified as Positive by Naive Bayes Model. The word cloud is created by excluding coronavirus and covid words. The tweets were extracted using these words therefore, they will dominate the entire word cloud.   
+
+
+```{r echo=FALSE, warning=FALSE}
+text<-df[df$Naive_Pred=="Positive",]
+
+text <- 
+  text$text %>%
+  str_remove("\\n") %>%                   # remove linebreaks
+  rm_url() %>%
+  str_remove_all("#\\S+") %>%             # Remove any hashtags
+  str_remove_all("@\\S+") %>%             # Remove any @ mentions
+  removeWords(stopwords("english")) %>%   # Remove common words (a, the, it etc.)
+  removeNumbers() %>%
+  stripWhitespace() %>%
+  removeWords(c("amp","covid","coronavirus"))   
+
+
+
+textCorpus <- 
+  Corpus(VectorSource(text)) %>%
+  TermDocumentMatrix() %>%
+  removeSparseTerms(sparse=0.999)%>%
+  as.matrix()
+
+textCorpus <- sort(rowSums(textCorpus), decreasing=TRUE)
+textCorpus <- data.frame(word = names(textCorpus), freq=textCorpus, row.names = NULL)
+
+
+wordcloud(words = textCorpus$word, freq = textCorpus$freq, min.freq = 10,
+          max.words=300, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+\newpage
+
+The Word Cloud created for tweets classified as Negative by Naive Bayes Model. The words coronavirus and covid have been excluded from the word cloud. 
+
+
+
+
+```{r echo=FALSE, warning=FALSE}
+
+text<-df[df$Naive_Pred=="Negative",]
+
+text <- 
+  text$text %>%
+  str_remove("\\n") %>%                   # remove linebreaks
+  rm_url() %>%
+  str_remove_all("#\\S+") %>%             # Remove any hashtags
+  str_remove_all("@\\S+") %>%             # Remove any @ mentions
+  removeWords(stopwords("english")) %>%   # Remove common words (a, the, it etc.)
+  removeNumbers() %>%
+  stripWhitespace() %>%
+  removeWords(c("amp","covid","coronavirus"))   
+
+
+
+textCorpus <- 
+  Corpus(VectorSource(text)) %>%
+  TermDocumentMatrix() %>%
+  as.matrix()
+
+textCorpus <- sort(rowSums(textCorpus), decreasing=TRUE)
+textCorpus <- data.frame(word = names(textCorpus), freq=textCorpus, row.names = NULL)
+
+
+wordcloud(words = textCorpus$word, freq = textCorpus$freq, min.freq = 10,
+          max.words=300, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+
+\newpage
+
+
+# F. Conclusion
+Contrary to the popular belief that covid-19 has stuck fear and sorrow in the life of people, it turns out that people are reciprocating in a very positive fashion, with the mindset of fighting the pandemic, being safe in this time frame, putting health as a priority. Trust Emotion is more dominant among people than Fear. This can be verified by the over all results we have had. This is really a benefiting indicator for many of the businesses around us, both in terms of moral support to sustain the current situation, but also in terms of financial and economic decisions which is largely biased by the mentality and emotions of the people.
+
+\newpage
+
+# References
+
+1. Kerchner, Daniel; Wrubel, Laura, 2020, "Coronavirus Tweet Ids", https://doi.org/10.7910/DVN/LW0BTB, Harvard Dataverse, V7 
+    Link: https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/LW0BTB
+
+2. Kaggle Dataset link: https://www.kaggle.com/imrandude/twitter-sentiment-analysis
+
+3. Online Parser: https://www.convertcsv.com/csv-viewer-editor.htm
+
+4. https://towardsdatascience.com/twitter-sentiment-analysis-on-novel-coronavirus-covid-19-5a9f950312d8
+
+5. https://www.kaggle.com/seunowo/sentiment-analysis-twitter-dataset
+
+6. https://www.marsja.se/how-to-extract-time-from-datetime-in-r-with-examples/
+
+\newpage
+# Appendix
+
+Below are the charts created using Syuzhet and sentimentR Package. Syuzhet Package is a custom sentiment dictionary developed in the Nebraska Literary Lab. It has a lexicon of 10748 words (Positive:3587 & Negative:7161).
+
+SentimentR is a Natural Language Processing based library for text classification. 
+
+```{r echo=FALSE, warning=FALSE}
+ggplot(df,aes(date, fill=Syuzhet))+geom_bar(position="dodge") +labs(x="Dates",y="Number of Tweets",title = "Covid Sentiment Analysis Using Syuzhet Package")+ theme_classic()+theme(legend.position ="top" ,plot.title = element_text(size = 16, face = "bold"),legend.title = element_blank())
+
+ggplot(df,aes(date, fill=SentimentR))+geom_bar(position="dodge") +labs(x="Dates",y="Number of Tweets",title = "Covid Sentiment Analysis Using SentimentR Package")+ theme_classic()+theme(legend.position ="top" ,plot.title = element_text(size = 16, face = "bold"),legend.title = element_blank())
+```
+
+
